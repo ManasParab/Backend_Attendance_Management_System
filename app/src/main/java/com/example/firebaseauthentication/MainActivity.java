@@ -1,15 +1,8 @@
 package com.example.firebaseauthentication;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
-
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.util.Log;
 import android.view.View;
@@ -18,10 +11,13 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.OnFailureListener;
-import com.google.android.gms.tasks.OnSuccessListener;
-import com.google.android.gms.tasks.Task;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.CollectionReference;
@@ -29,71 +25,94 @@ import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
-import com.google.firebase.firestore.QuerySnapshot;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
 
-    TextView textView;
-    Button logoutButton, createClassButton, joinClassButton, refreshButton;
-    EditText classNameEditText;
+    TextView textView, facultyName, classesIndicator;
+    Button logoutButton, createClassButton, joinClassButton, profileBtn, allClasses;
+    TextInputEditText classNameEditText;
     FirebaseAuth auth;
     FirebaseUser user;
     FirebaseFirestore db;
     private RecyclerView subjectsRecyclerView;
-    private String userRole;
-
+    private String userRole, deptName;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        if (isDeveloperModeEnabled()) {
+            // USB debugging is enabled, take appropriate action (e.g., show a message and exit the app)
+            Toast.makeText(this, "Disable Developer Mode to Use BAMS.", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
+            return;
+        }
+
         textView = findViewById(R.id.user_details);
+        classesIndicator = findViewById(R.id.classesIndicator);
+        facultyName = findViewById(R.id.facultyName);
         logoutButton = findViewById(R.id.logout);
+        profileBtn = findViewById(R.id.profileBtn);
         createClassButton = findViewById(R.id.createClassButton);
         joinClassButton = findViewById(R.id.joinClassButton);
+        allClasses = findViewById(R.id.allClasses);
         classNameEditText = findViewById(R.id.classNameEditText);
         subjectsRecyclerView = findViewById(R.id.subjectsRecyclerView);
         SwipeRefreshLayout swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
-        swipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
-            @Override
-            public void onRefresh() {
-                getSubjectsList();
-                swipeRefreshLayout.setRefreshing(false); // To stop the refresh animation
-            }
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            getSubjectsList();
+            swipeRefreshLayout.setRefreshing(false);
         });
         auth = FirebaseAuth.getInstance();
         user = auth.getCurrentUser();
         db = FirebaseFirestore.getInstance();
-        getSubjectsList();
-        setupRecyclerView();
+        setupButtonListeners();
         if (user == null) {
             navigateToLogin();
         } else {
             textView.setText(user.getEmail());
+            fetchUserName();
             checkUserRole();
             setupRecyclerView();
-            fetchEnrolledSubjects(); // Call the method here
+            fetchEnrolledSubjects();
         }
-        setupButtonListeners();
+
+        allClasses.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (allClasses.getText().equals("All Classes")) {
+                    fetchClassesAccessibleByTeacher();
+                    allClasses.setText("My Classes");
+                    classesIndicator.setText("All Classes");
+                } else if (allClasses.getText().equals("My Classes")){
+                    fetchClassesCreatedByTeacher();
+                    allClasses.setText("All Classes");
+                    classesIndicator.setText("My Classes");
+                }
+            }
+        });
+
+        checkAccessibleClasses();
+
     }
+
 
     private void setupRecyclerView() {
         subjectsRecyclerView.setLayoutManager(new LinearLayoutManager(this));
-        // Initialize with an empty adapter
         SubjectAdapter adapter = new SubjectAdapter(new ArrayList<>(), this::onDeleteSubject);
         subjectsRecyclerView.setAdapter(adapter);
-        // Now fetch the subjects and update the adapter
         getSubjectsList();
     }
 
     private void onDeleteSubject(String className) {
-        // Show confirmation dialog before deleting
         showDeleteConfirmationDialog(className, () -> deleteSubject(className));
     }
 
@@ -101,47 +120,40 @@ public class MainActivity extends AppCompatActivity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Confirm Deletion");
         builder.setMessage("Are you sure you want to delete " + className + "?");
-
-        builder.setPositiveButton("Delete", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                deleteCallback.run(); // Perform the deletion
-            }
-        });
+        builder.setPositiveButton("Delete", (dialog, which) -> deleteCallback.run());
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss());
-
         AlertDialog dialog = builder.create();
         dialog.show();
     }
 
     private void deleteSubject(String className) {
-        // First, delete the class from the 'classes' collection
         db.collection("classes").whereEqualTo("className", className).get().addOnCompleteListener(task -> {
             if (task.isSuccessful()) {
                 for (DocumentSnapshot document : task.getResult()) {
                     String classId = document.getId();
-
-                    // Delete the class from 'classes_created' for the teacher
-                    if (user != null) {
-                        db.collection("users").document(user.getUid()).collection("classes_created").document(classId).delete();
-                    }
-
-                    // Delete the class from 'classes_enrolled' for all enrolled students
-                    db.collection("classes").document(classId).collection("students").get()
-                            .addOnCompleteListener(task1 -> {
-                                if (task1.isSuccessful()) {
-                                    for (DocumentSnapshot studentDoc : task1.getResult()) {
-                                        String studentId = studentDoc.getId();
-                                        db.collection("users").document(studentId).collection("classes_enrolled").document(className).delete();
+                    if ("teacher".equals(userRole)) {
+                        db.collection("classes").document(classId).delete().addOnSuccessListener(aVoid -> {
+                            db.collection("users").document(user.getUid()).collection("classes_created").document(className).delete().addOnSuccessListener(aVoid1 -> {
+                                db.collection("classes").document(classId).collection("students").get().addOnCompleteListener(task1 -> {
+                                    if (task1.isSuccessful()) {
+                                        for (DocumentSnapshot studentDocument : task1.getResult()) {
+                                            studentDocument.getReference().delete();
+                                        }
+                                    } else {
+                                        Log.d("DeleteSubject", "Error deleting students collection", task1.getException());
                                     }
-                                }
-                            });
-
-                    // Finally, delete the class document itself
-                    db.collection("classes").document(classId).delete().addOnSuccessListener(aVoid -> {
-                        Toast.makeText(MainActivity.this, "Class deleted", Toast.LENGTH_SHORT).show();
-                        // Refresh your list here, if necessary
-                    }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Error deleting class", Toast.LENGTH_SHORT).show());
+                                });
+                                getSubjectsList();
+                                Toast.makeText(MainActivity.this, "Class deleted", Toast.LENGTH_SHORT).show();
+                            }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Error deleting class from 'classes_created'", Toast.LENGTH_SHORT).show());
+                        }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Error deleting class", Toast.LENGTH_SHORT).show());
+                    }
+                }
+                if ("student".equals(userRole)) {
+                    db.collection("users").document(user.getUid()).collection("classes_enrolled").document(className).delete().addOnSuccessListener(aVoid -> {
+                        getSubjectsList();
+                        Toast.makeText(MainActivity.this, "Class deleted from your enrolled classes", Toast.LENGTH_SHORT).show();
+                    }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Error deleting class from your enrolled classes", Toast.LENGTH_SHORT).show());
                 }
             } else {
                 Toast.makeText(MainActivity.this, "Error finding class", Toast.LENGTH_SHORT).show();
@@ -150,46 +162,141 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void getSubjectsList() {
-        db.collection("classes")
-                .get()
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        List<Map<String, String>> classes = new ArrayList<>();
-                        for (DocumentSnapshot document : task.getResult()) {
-                            Map<String, String> classInfo = new HashMap<>();
-                            String className = document.getString("className");
-                            String joinCode = document.getString("joinCode");
-                            if (className != null && joinCode != null) {
-                                classInfo.put("className", className);
-                                classInfo.put("joinCode", joinCode);
-                                classes.add(classInfo);
-                            }
+        if (userRole != null) {
+            if ("teacher".equals(userRole)) {
+                fetchClassesCreatedByTeacher();
+            } else {
+                fetchClassesEnrolledByStudent();
+            }
+        }
+    }
+
+
+    private void fetchClassesEnrolledByStudent() {
+        if (user != null) {
+            CollectionReference classesEnrolledRef = db.collection("users").document(user.getUid()).collection("classes_enrolled");
+            classesEnrolledRef.get().addOnSuccessListener(queryDocumentSnapshots -> {
+                List<Map<String, String>> classes = new ArrayList<>();
+                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                    Map<String, String> classInfo = new HashMap<>();
+                    String className = document.getString("className");
+                    String joinCode = document.getString("joinCode");
+                    if (className != null && joinCode != null) {
+                        classInfo.put("className", className);
+                        classInfo.put("joinCode", joinCode);
+                        classes.add(classInfo);
+                    }
+                }
+                SubjectAdapter adapter = new SubjectAdapter(classes, this::onDeleteSubject);
+                subjectsRecyclerView.setAdapter(adapter);
+            }).addOnFailureListener(e -> {
+                Toast.makeText(MainActivity.this, "Error loading classes", Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    private void fetchClassesCreatedByTeacher() {
+        if (user != null) {
+            CollectionReference classesCreatedRef = db.collection("users").document(user.getUid()).collection("classes_created");
+            classesCreatedRef.get().addOnSuccessListener(queryDocumentSnapshots -> {
+                List<Map<String, String>> classes = new ArrayList<>();
+                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                    Map<String, String> classInfo = new HashMap<>();
+                    String className = document.getString("className");
+                    String joinCode = document.getString("joinCode");
+                    if (className != null && joinCode != null) {
+                        classInfo.put("className", className);
+                        classInfo.put("joinCode", joinCode);
+                        classes.add(classInfo);
+                        allClasses.setText("All Classes");
+                        classesIndicator.setText("My Classes");
+                    }
+                }
+                SubjectAdapter adapter = new SubjectAdapter(classes, this::onDeleteSubject);
+                subjectsRecyclerView.setAdapter(adapter);
+            }).addOnFailureListener(e -> {
+                Toast.makeText(MainActivity.this, "Error loading classes", Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    private void checkAccessibleClasses() {
+        FirebaseFirestore.getInstance().collection("users")
+                .document(user.getUid()) // Use the UID of the current user
+                .collection("classes_accessible")
+                .addSnapshotListener((value, error) -> {
+                    if (error != null) {
+                        // Error occurred while fetching the sub-collection
+                        // Handle the error
+                        Log.e("TAG", "Error getting documents: ", error);
+                        return;
+                    }
+
+                    if (value != null) {
+                        if (!value.isEmpty()) {
+                            // Sub-collection "classes_accessible" exists
+                            // Handle the case where the sub-collection exists
+                            // For example, display a message or perform further actions
+                            allClasses.setVisibility(View.VISIBLE);
+                        } else {
+                            // Sub-collection "classes_accessible" does not exist
+                            // Handle the case where the sub-collection does not exist
+                            // For example, display a message or perform further actions
+                            allClasses.setVisibility(View.GONE);
                         }
-                        // Update adapter here
-                        SubjectAdapter adapter = new SubjectAdapter(classes, this::onDeleteSubject);
-                        subjectsRecyclerView.setAdapter(adapter);
-                    } else {
-                        Toast.makeText(MainActivity.this, "Error loading classes", Toast.LENGTH_SHORT).show();
                     }
                 });
     }
+
+
+    private void fetchClassesAccessibleByTeacher() {
+        if (user != null) {
+            CollectionReference classesAccessibleRef = db.collection("users")
+                    .document(user.getUid())
+                    .collection("classes_accessible");
+
+            classesAccessibleRef.addSnapshotListener((queryDocumentSnapshots, e) -> {
+                if (e != null) {
+                    // Handle errors
+                    Toast.makeText(MainActivity.this, "Error fetching accessible classes: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                if (queryDocumentSnapshots != null) {
+                    List<Map<String, String>> classes = new ArrayList<>();
+                    for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                        Map<String, String> classInfo = new HashMap<>();
+                        String className = document.getString("className");
+                        String joinCode = document.getString("joinCode");
+                        if (className != null && joinCode != null) {
+                            classInfo.put("className", className);
+                            classInfo.put("joinCode", joinCode);
+                            classes.add(classInfo);
+                        }
+                    }
+                    SubjectAdapter adapter = new SubjectAdapter(classes, this::onDeleteSubject);
+                    subjectsRecyclerView.setAdapter(adapter);
+                }
+            });
+        }
+    }
+
+
 
     private void setupButtonListeners() {
         logoutButton.setOnClickListener(v -> logoutUser());
         createClassButton.setOnClickListener(v -> createClass());
         joinClassButton.setOnClickListener(v -> showJoinClassDialog());
+        profileBtn.setOnClickListener(v -> navigateToProfile());
     }
+
 
     private void logoutUser() {
-        new AlertDialog.Builder(this).setTitle("Logout").setMessage("Are you sure you want to logout?").setPositiveButton("Logout", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                auth.signOut();
-                navigateToLogin();
-            }
+        new AlertDialog.Builder(this).setTitle("Logout").setMessage("Are you sure you want to logout?").setPositiveButton("Logout", (dialog, which) -> {
+            auth.signOut();
+            navigateToLogin();
         }).setNegativeButton("Cancel", null).show();
     }
-
 
     private void navigateToLogin() {
         Intent intent = new Intent(getApplicationContext(), Login.class);
@@ -207,7 +314,7 @@ public class MainActivity extends AppCompatActivity {
         if (documentSnapshot.exists()) {
             userRole = documentSnapshot.getString("role");
             updateUIForRole(userRole);
-            getSubjectsList(); // Fetch subjects after knowing the role
+            getSubjectsList();
         }
     }
 
@@ -215,140 +322,192 @@ public class MainActivity extends AppCompatActivity {
         if ("teacher".equals(role)) {
             createClassButton.setVisibility(View.VISIBLE);
             joinClassButton.setVisibility(View.GONE);
-        } else if ("student".equals(role)) {
+        } else {
+            // Check if attendance is true for any enrolled subject
             joinClassButton.setVisibility(View.VISIBLE);
             createClassButton.setVisibility(View.GONE);
+            disableButtonWhenAttendanceTrue();
+            enableButtonWhenAttendanceFalse();
         }
     }
+
+    private void disableButtonWhenAttendanceTrue() {
+        if (user != null) {
+            CollectionReference enrolledClassesRef = db.collection("users").document(user.getUid()).collection("classes_enrolled");
+            enrolledClassesRef.addSnapshotListener((queryDocumentSnapshots, e) -> {
+                if (e != null) {
+                    Log.e("FetchAttendance", "Error fetching enrolled classes", e);
+                    return;
+                }
+
+                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                    String className = document.getString("className");
+                    if (className != null) {
+                        db.collection("classes").whereEqualTo("className", className).addSnapshotListener((queryDocumentSnapshots1, e1) -> {
+                            if (e1 != null) {
+                                Log.e("FetchAttendance", "Error fetching attendance status", e1);
+                                return;
+                            }
+
+                            for (DocumentSnapshot doc : queryDocumentSnapshots1) {
+                                Boolean attendance = doc.getBoolean("attendance");
+                                if (attendance != null && attendance) {
+                                    runOnUiThread(() -> logoutButton.setEnabled(false));
+                                    return; // No need to continue checking other documents
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    }
+
+    private void enableButtonWhenAttendanceFalse() {
+        if (user != null) {
+            CollectionReference enrolledClassesRef = db.collection("users").document(user.getUid()).collection("classes_enrolled");
+            enrolledClassesRef.addSnapshotListener((queryDocumentSnapshots, e) -> {
+                if (e != null) {
+                    Log.e("FetchAttendance", "Error fetching enrolled classes", e);
+                    return;
+                }
+
+                AtomicInteger queryCount = new AtomicInteger(queryDocumentSnapshots.size());
+
+                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                    String className = document.getString("className");
+                    if (className != null) {
+                        db.collection("classes").whereEqualTo("className", className).addSnapshotListener((queryDocumentSnapshots1, e1) -> {
+                            if (e1 != null) {
+                                Log.e("FetchAttendance", "Error fetching attendance status", e1);
+                                return;
+                            }
+
+                            boolean anyAttendance = false;
+
+                            for (DocumentSnapshot doc : queryDocumentSnapshots1) {
+                                Boolean attendance = doc.getBoolean("attendance");
+                                if (attendance != null && attendance) {
+
+                                    anyAttendance = true;
+                                    break;
+                                }
+                            }
+
+                            if (!anyAttendance) {
+                                runOnUiThread(() -> logoutButton.setEnabled(true));
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    }
+
 
     private void joinClass(final String joinCode) {
         if (joinCode.isEmpty()) {
             Toast.makeText(MainActivity.this, "Join code is required", Toast.LENGTH_SHORT).show();
             return;
         }
-        // Check if class exists with the given join code
-        db.collection("classes").document(joinCode).get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
-            @Override
-            public void onComplete(@NonNull Task<DocumentSnapshot> task) {
-                if (task.isSuccessful()) {
-                    DocumentSnapshot document = task.getResult();
-                    if (document.exists()) {
-                        // Class exists, proceed to add student
-                        addUserToClass(joinCode);
-                    } else {
-                        Toast.makeText(MainActivity.this, "Invalid join code", Toast.LENGTH_SHORT).show();
-                    }
+        db.collection("classes").document(joinCode).get().addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                DocumentSnapshot document = task.getResult();
+                if (document.exists()) {
+                    getSubjectsList();
+                    updateStudentClassesEnrolled(joinCode, document.getString("className"));
+                    String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+                    String className = document.getString("className");
+                    DocumentReference classEnrolledRef = db.collection("classes").document(joinCode).collection("students").document(userId);
+                    enrollStudentInClass(userId, joinCode, className, classEnrolledRef);
                 } else {
-                    Toast.makeText(MainActivity.this, "Error checking join code", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Invalid join code", Toast.LENGTH_SHORT).show();
                 }
+            } else {
+                Toast.makeText(MainActivity.this, "Error checking join code", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
     private void addUserToClass(final String joinCode) {
-        final String userId = user.getUid(); // Get current user's ID
-        // Fetch the class details using the join code
-        db.collection("classes").document(joinCode).get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
-            @Override
-            public void onComplete(@NonNull Task<DocumentSnapshot> task) {
-                if (task.isSuccessful()) {
-                    DocumentSnapshot classDoc = task.getResult();
-                    if (classDoc.exists()) {
-                        // Extract the class name
-                        final String className = classDoc.getString("className");
-                        // Check if the student is already enrolled in the class
-                        final DocumentReference classEnrolledRef = db.collection("users").document(userId).collection("classes_enrolled").document(className);
-                        classEnrolledRef.get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
-                            @Override
-                            public void onComplete(@NonNull Task<DocumentSnapshot> task) {
-                                if (task.isSuccessful()) {
-                                    DocumentSnapshot document = task.getResult();
-                                    if (document.exists()) {
-                                        Toast.makeText(MainActivity.this, "Already enrolled in class", Toast.LENGTH_SHORT).show();
-                                    } else {
-                                        // Student not enrolled in class, proceed to enroll
-                                        enrollStudentInClass(userId, joinCode, className, classEnrolledRef);
-                                    }
-                                } else {
-                                    Toast.makeText(MainActivity.this, "Failed to check class enrollment", Toast.LENGTH_SHORT).show();
-                                }
+        final String userId = user.getUid();
+        db.collection("classes").document(joinCode).get().addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                DocumentSnapshot classDoc = task.getResult();
+                if (classDoc.exists()) {
+                    final String className = classDoc.getString("className");
+                    final DocumentReference classEnrolledRef = db.collection("users").document(userId).collection("classes_enrolled").document(className);
+                    classEnrolledRef.get().addOnCompleteListener(task1 -> {
+                        if (task1.isSuccessful()) {
+                            DocumentSnapshot document = task1.getResult();
+                            if (document.exists()) {
+                                Toast.makeText(MainActivity.this, "Already enrolled in class", Toast.LENGTH_SHORT).show();
+                            } else {
+                                enrollStudentInClass(userId, joinCode, className, classEnrolledRef);
                             }
-                        });
-                    } else {
-                        Toast.makeText(MainActivity.this, "Class not found", Toast.LENGTH_SHORT).show();
-                    }
+                        } else {
+                            Toast.makeText(MainActivity.this, "Failed to check class enrollment", Toast.LENGTH_SHORT).show();
+                        }
+                    });
                 } else {
-                    Toast.makeText(MainActivity.this, "Error fetching class details", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Class not found", Toast.LENGTH_SHORT).show();
                 }
+            } else {
+                Toast.makeText(MainActivity.this, "Error fetching class details", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
     private void enrollStudentInClass(String userId, String joinCode, String className, DocumentReference classEnrolledRef) {
-        // Create an empty document in the 'classes_enrolled' collection
-        classEnrolledRef.set(new HashMap<>()) // Use an empty HashMap
-                .addOnSuccessListener(new OnSuccessListener<Void>() {
-                    @Override
-                    public void onSuccess(Void aVoid) {
+        db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+            if (documentSnapshot.exists()) {
+                String name = documentSnapshot.getString("name");
+                String rollNumber = documentSnapshot.getString("rollNumber");
+                classEnrolledRef.set(new HashMap<>()).addOnSuccessListener(aVoid -> {
+                    Map<String, Object> studentInfo = new HashMap<>();
+                    studentInfo.put("userId", userId);
+                    studentInfo.put("email", user.getEmail());
+                    studentInfo.put("name", name);
+                    studentInfo.put("rollNumber", rollNumber);
+                    db.collection("classes").document(joinCode).collection("students").document(userId).set(studentInfo).addOnSuccessListener(aVoid1 -> {
                         Toast.makeText(MainActivity.this, "Joined class successfully", Toast.LENGTH_SHORT).show();
-                    }
-                }).addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        Toast.makeText(MainActivity.this, "Failed to join class", Toast.LENGTH_SHORT).show();
-                    }
+                    }).addOnFailureListener(e -> {
+                        Toast.makeText(MainActivity.this, "Failed to add student to class", Toast.LENGTH_SHORT).show();
+                    });
+                }).addOnFailureListener(e -> {
+                    Toast.makeText(MainActivity.this, "Failed to join class", Toast.LENGTH_SHORT).show();
                 });
-        // Add student to a sub-collection in the class document
-        Map<String, Object> studentInfo = new HashMap<>();
-        studentInfo.put("userId", userId);
-        studentInfo.put("email", user.getEmail());
-        db.collection("classes").document(joinCode).collection("students").document(userId).set(studentInfo).addOnSuccessListener(new OnSuccessListener<Void>() {
-            @Override
-            public void onSuccess(Void aVoid) {
-                // This can be kept empty if you don't need to do anything here
+            } else {
+                Toast.makeText(MainActivity.this, "User details not found", Toast.LENGTH_SHORT).show();
             }
-        }).addOnFailureListener(new OnFailureListener() {
-            @Override
-            public void onFailure(@NonNull Exception e) {
-                Toast.makeText(MainActivity.this, "Failed to add student to class", Toast.LENGTH_SHORT).show();
-            }
+        }).addOnFailureListener(e -> {
+            Toast.makeText(MainActivity.this, "Failed to fetch user details", Toast.LENGTH_SHORT).show();
         });
     }
 
     private void fetchEnrolledSubjects() {
         if (user != null) {
-            // Get the reference to the "classes_enrolled" collection for the current user
             CollectionReference enrolledClassesRef = db.collection("users").document(user.getUid()).collection("classes_enrolled");
-
-            // Fetch the documents from the "classes_enrolled" collection
-            enrolledClassesRef.get()
-                    .addOnSuccessListener(queryDocumentSnapshots -> {
-                        List<String> enrolledSubjects = new ArrayList<>();
-                        for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                            // Get the subject name from each document
-                            String subjectName = document.getString("className");
-                            if (subjectName != null) {
-                                // Add the subject name to the list of enrolled subjects
-                                enrolledSubjects.add(subjectName);
-                            }
-                        }
-                        // Do something with the list of enrolled subjects (e.g., display in UI)
-                        displayEnrolledSubjects(enrolledSubjects);
-                    })
-                    .addOnFailureListener(e -> {
-                        // Handle any errors that may occur during fetching
-                        Log.e("FetchSubjects", "Error fetching enrolled subjects", e);
-                    });
+            enrolledClassesRef.get().addOnSuccessListener(queryDocumentSnapshots -> {
+                List<String> enrolledSubjects = new ArrayList<>();
+                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                    String subjectName = document.getString("className");
+                    if (subjectName != null) {
+                        enrolledSubjects.add(subjectName);
+                    }
+                }
+                displayEnrolledSubjects(enrolledSubjects);
+            }).addOnFailureListener(e -> {
+                Log.e("FetchSubjects", "Error fetching enrolled subjects", e);
+            });
         }
     }
 
     private void displayEnrolledSubjects(List<String> enrolledSubjects) {
-        // Here, you can display the enrolled subjects in the UI or perform any other operations
         for (String subject : enrolledSubjects) {
             Log.d("EnrolledSubject", subject);
         }
     }
-
 
     private void createClass() {
         String className = classNameEditText.getText().toString().trim();
@@ -356,67 +515,49 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "Class name is required", Toast.LENGTH_SHORT).show();
             return;
         }
-
-        // Check if a class with the same name already exists
-        db.collection("classes").whereEqualTo("className", className).get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    if (!queryDocumentSnapshots.isEmpty()) {
-                        // Class with same name already exists
-                        Toast.makeText(MainActivity.this, "Class with this name already exists", Toast.LENGTH_SHORT).show();
-                    } else {
-                        // No class with the same name, proceed to create new class
-                        createNewClass(className);
-                    }
-                })
-                .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to check for existing class", Toast.LENGTH_SHORT).show());
+        db.collection("classes").whereEqualTo("className", className).get().addOnSuccessListener(queryDocumentSnapshots -> {
+            classNameEditText.setText("");
+            classNameEditText.clearFocus();
+            if (!queryDocumentSnapshots.isEmpty()) {
+                Toast.makeText(MainActivity.this, "Class with this name already exists", Toast.LENGTH_SHORT).show();
+            } else {
+                createNewClass(className);
+            }
+        }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to check for existing class", Toast.LENGTH_SHORT).show());
     }
 
     private void createNewClass(String className) {
         final String joinCode = generateRandomCode(6);
-
+        boolean attendance = false;
         Map<String, Object> classInfo = new HashMap<>();
         classInfo.put("className", className);
         classInfo.put("joinCode", joinCode);
-        classInfo.put("teacherEmail", user.getEmail()); // Add the teacher's email
-
-        // Create or update class in classes collection
-        db.collection("classes").document(joinCode).set(classInfo)
-                .addOnSuccessListener(aVoid -> {
-                    Toast.makeText(MainActivity.this, "Class created successfully", Toast.LENGTH_SHORT).show();
-                    // Update the teacher's 'classes_created' sub-collection
-                    updateTeacherClassesCreated(joinCode, className);
-                })
-                .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to create class", Toast.LENGTH_SHORT).show());
+        classInfo.put("teacherEmail", user.getEmail());
+        classInfo.put("attendance", attendance);
+        db.collection("classes").document(joinCode).set(classInfo).addOnSuccessListener(aVoid -> {
+            fetchClassesCreatedByTeacher();
+            Toast.makeText(MainActivity.this, "Class created successfully", Toast.LENGTH_SHORT).show();
+            fetchClassesCreatedByTeacher();
+            getSubjectsList();
+            updateTeacherClassesCreated(joinCode, className);
+        }).addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to create class", Toast.LENGTH_SHORT).show());
     }
 
     private void updateTeacherClassesCreated(String joinCode, String className) {
         Map<String, Object> classCreatedInfo = new HashMap<>();
         classCreatedInfo.put("className", className);
         classCreatedInfo.put("joinCode", joinCode);
-
-        // Assuming 'user' is the current logged-in teacher
-        String teacherId = user.getUid(); // Get the teacher's UID
-
-        // Add the class to the teacher's 'classes_created' sub-collection
-        db.collection("users").document(teacherId).collection("classes_created").document(joinCode).set(classCreatedInfo)
-                .addOnSuccessListener(aVoid -> Log.d("UpdateClassesCreated", "Classes created updated successfully"))
-                .addOnFailureListener(e -> Log.e("UpdateClassesCreated", "Error updating classes created", e));
+        String teacherId = user.getUid();
+        db.collection("users").document(teacherId).collection("classes_created").document(className).set(classCreatedInfo).addOnSuccessListener(aVoid -> Log.d("UpdateClassesCreated", "Classes created updated successfully")).addOnFailureListener(e -> Log.e("UpdateClassesCreated", "Error updating classes created", e));
     }
 
     private void updateStudentClassesEnrolled(String joinCode, String className) {
+        String studentId = user.getUid();
         Map<String, Object> classEnrolledInfo = new HashMap<>();
         classEnrolledInfo.put("className", className);
         classEnrolledInfo.put("joinCode", joinCode);
-
-        // Get the student's UID
-        String studentId = user.getUid();
-
-        // Add the class to the student's 'classes_enrolled' sub-collection
-        db.collection("users").document(studentId).collection("classes_enrolled").document(joinCode).set(classEnrolledInfo)
-                .addOnSuccessListener(aVoid -> Log.d("UpdateClassesEnrolled", "Classes enrolled updated successfully"))
-                .addOnFailureListener(e -> Log.e("UpdateClassesEnrolled", "Error updating classes enrolled", e));
+        db.collection("users").document(studentId).collection("classes_enrolled").document(className).set(classEnrolledInfo).addOnSuccessListener(aVoid -> Log.d("UpdateClassesEnrolled", "Classes enrolled updated successfully")).addOnFailureListener(e -> Log.e("UpdateClassesEnrolled", "Error updating classes enrolled", e));
     }
-
 
     private String generateRandomCode(int length) {
         String characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -434,13 +575,67 @@ public class MainActivity extends AppCompatActivity {
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT);
         builder.setView(input);
-        builder.setPositiveButton("Join", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                joinClass(input.getText().toString().trim());
-            }
-        });
+        builder.setPositiveButton("Join", (dialog, which) -> joinClass(input.getText().toString().trim()));
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
         builder.show();
+    }
+
+    private void fetchUserName() {
+        if (user != null) {
+            DocumentReference userRef = db.collection("users").document(user.getUid());
+            userRef.get().addOnSuccessListener(documentSnapshot -> {
+                if (documentSnapshot.exists()) {
+                    String userName = documentSnapshot.getString("name");
+                    if (userName != null) {
+                        facultyName.setText(userName);
+                    }
+                }
+            }).addOnFailureListener(e -> {
+                Toast.makeText(MainActivity.this, "Failed to fetch user's name", Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    private void navigateToProfile() {
+        Intent intent = new Intent(MainActivity.this, ProfileActivity.class);
+        intent.putExtra("email", user.getEmail());
+        if ("student".equals(userRole)) {
+            db.collection("users").document(user.getUid()).get().addOnSuccessListener(documentSnapshot -> {
+                if (documentSnapshot.exists()) {
+                    String name = documentSnapshot.getString("name");
+                    String rollNumber = documentSnapshot.getString("rollNumber");
+                    String dob = documentSnapshot.getString("dob");
+                    String phone = documentSnapshot.getString("phone");
+                    String role = documentSnapshot.getString("role");
+                    intent.putExtra("name", name);
+                    intent.putExtra("rollNumber", rollNumber);
+                    intent.putExtra("dob", dob);
+                    intent.putExtra("phone", phone);
+                    intent.putExtra("role", role);
+                    startActivity(intent);
+                }
+            }).addOnFailureListener(e -> {
+            });
+        } else {
+            db.collection("users").document(user.getUid()).get().addOnSuccessListener(documentSnapshot -> {
+                if (documentSnapshot.exists()) {
+                    String name = documentSnapshot.getString("name");
+                    String dob = documentSnapshot.getString("dob");
+                    String phone = documentSnapshot.getString("phone");
+                    String role = documentSnapshot.getString("role");
+                    intent.putExtra("name", name);
+                    intent.putExtra("dob", dob);
+                    intent.putExtra("phone", phone);
+                    intent.putExtra("role", role);
+                    startActivity(intent);
+                }
+            }).addOnFailureListener(e -> {
+            });
+            startActivity(intent);
+        }
+    }
+
+    private boolean isDeveloperModeEnabled() {
+        return Settings.Secure.getInt(getApplicationContext().getContentResolver(), Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1;
     }
 }

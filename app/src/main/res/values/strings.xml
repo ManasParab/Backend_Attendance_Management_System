@@ -1,11 +1,11 @@
 <resources>
-    <string name="app_name">Firebase Authentication</string>
+    <string name="app_name">BAMS</string>
     <string name="login">Login</string>
     <string name="password">Password</string>
     <string name="email">Email</string>
     <string name="register">Register</string>
-    <string name="click_to_login">Click to Login</string>
-    <string name="click_to_register">Click to Register</string>
+    <string name="click_to_login">Login</string>
+    <string name="click_to_register">Register Now</string>
     <string name="logout">Logout</string>
     <string name="view_password">View Password</string>
     <string name="student">student</string>

@@ -1,7 +1,10 @@
 package com.example.firebaseauthentication;
 
+import android.content.Intent;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -31,6 +34,13 @@ public class TeacherActivity extends AppCompatActivity implements SubjectAdapter
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        if (isDeveloperModeEnabled()) {
+            // USB debugging is enabled, take appropriate action (e.g., show a message and exit the app)
+            Toast.makeText(this, "Disable Developer Mode to Use BAMS.", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
+            return;
+        }
 
         recyclerView = findViewById(R.id.subjectsRecyclerView);
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
@@ -95,4 +105,9 @@ public class TeacherActivity extends AppCompatActivity implements SubjectAdapter
                     }
                 });
     }
+
+    private boolean isDeveloperModeEnabled() {
+        return Settings.Secure.getInt(getApplicationContext().getContentResolver(), Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1;
+    }
+
 }

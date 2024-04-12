@@ -50,6 +50,10 @@ public class SubjectAdapter extends RecyclerView.Adapter<SubjectAdapter.SubjectV
         return subjects != null ? subjects.size() : 0;
     }
 
+    interface OnSubjectDeleteListener {
+        void onDelete(String subjectName);
+    }
+
     public static class SubjectViewHolder extends RecyclerView.ViewHolder {
 
         TextView tvSubjectName;
@@ -61,9 +65,5 @@ public class SubjectAdapter extends RecyclerView.Adapter<SubjectAdapter.SubjectV
             tvSubjectName = itemView.findViewById(R.id.tvSubjectName);
             btnDelete = itemView.findViewById(R.id.btnDelete);
         }
-    }
-
-    interface OnSubjectDeleteListener {
-        void onDelete(String subjectName);
     }
 }

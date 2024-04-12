@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -11,18 +15,23 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.Light"
+        android:theme="@style/AppTheme"
         tools:targetApi="31">
 
         <activity
             android:name=".Register"
             android:exported="false"
-            android:theme="@style/Theme.Material3.Light.NoActionBar" />
+            android:theme="@style/AppTheme" />
 
         <activity
             android:name=".Login"
             android:exported="true"
-            android:theme="@style/Theme.Material3.Light.NoActionBar" >
+            android:theme="@style/AppTheme"/>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -30,12 +39,58 @@
         </activity>
 
         <activity
-            android:name=".MainActivity"
-            android:exported="true"/>
+            android:name=".SubjectDetailsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <!-- Add the StudentsEnrolledActivity -->
+        <activity
+            android:name=".StudentsEnrolledActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
 
         <activity
-            android:name=".SubjectDetailsActivity"
-            android:exported="true"/>
+            android:name=".ProfileActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".AttendanceManagementActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme"
+            android:screenOrientation="portrait"
+            />
+
+        <activity
+            android:name=".TeacherAttendanceRecordsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".ClassDetailsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".SubCollectionRecordsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".StudentAttendanceRecordsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".StudentAttendanceRecordsDetailsActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".manageAccessActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
 
         <activity android:name="com.example.firebaseauthentication.TeacherActivity" />
     </application>
